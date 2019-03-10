@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"math/bits"
 	"os"
 	"regexp"
 	"runtime"
@@ -20,7 +21,7 @@ var (
 	alphabet      = regexp.MustCompile("^[123456789abcdefghijklmnopqrstuvwxyz]+$")
 	numWorkers    = runtime.NumCPU()
 	byteN         = 2
-	precision     = 256
+	difficulty    = 18
 	examplePeerID = "QmaSCVHThE4syxb8hDnjMgCPvjsN9gedNBD2u2UeSs1hJk"
 )
 
@@ -28,10 +29,7 @@ var (
 type Key struct {
 	GenPrettyID  string
 	DestPrettyID string
-	DHTGen       []byte
-	DHTDest      []byte
-	Xor          []byte
-	Dist         int
+	MatchPrefix  int
 }
 
 func main() {
@@ -68,14 +66,9 @@ Usage:
 		}()
 	}
 	for key := range keyChan {
-		fmt.Printf("%s\n", key.DestPrettyID)
-		fmt.Printf("%s\n", key.GenPrettyID)
-		fmt.Print("\n")
-		printByte(key.DHTDest, byteN)
-		printByte(key.DHTGen, byteN)
-		printByte(key.Xor, byteN)
-		fmt.Printf("%d", key.Dist)
-		fmt.Print("\n")
+		fmt.Println(key.DestPrettyID)
+		fmt.Println(key.GenPrettyID)
+		fmt.Println(key.MatchPrefix)
 	}
 }
 
@@ -106,8 +99,8 @@ func byteArrayToInt(byteSlice []byte, bytes int) int {
 
 func generateKey(destPrettyID string, keyChan chan Key) error {
 	for {
-		//privateKey, publicKey, err := crypto.GenerateEd25519Key(rand.Reader)
-		privateKey, publicKey, err := crypto.GenerateRSAKeyPair(2048, rand.Reader)
+		privateKey, publicKey, err := crypto.GenerateEd25519Key(rand.Reader)
+		//privateKey, publicKey, err := crypto.GenerateRSAKeyPair(2048, rand.Reader)
 		if err != nil {
 			return err
 		}
@@ -117,20 +110,11 @@ func generateKey(destPrettyID string, keyChan chan Key) error {
 			return err
 		}
 
-		dhtGen := kb.ConvertPeerID(genID)
+		genPretty := genID.Pretty()
 
-		destID, err := peer.IDB58Decode(destPrettyID)
-		if err != nil {
-			return err
-		}
+		matchPrefix := matchingPrefix(genPretty, destPrettyID)
 
-		dhtDest := kb.ConvertPeerID(destID)
-
-		xor := u.XOR(dhtGen, dhtDest)
-
-		dist := byteArrayToInt(xor, byteN)
-
-		if dist > precision {
+		if matchPrefix < difficulty {
 			continue
 		}
 
@@ -149,10 +133,26 @@ func generateKey(destPrettyID string, keyChan chan Key) error {
 		keyChan <- Key{
 			GenPrettyID:  genPrettyID,
 			DestPrettyID: destPrettyID,
-			DHTGen:       dhtGen,
-			DHTDest:      dhtDest,
-			Xor:          xor,
-			Dist:         dist,
+			MatchPrefix:  matchPrefix,
 		}
 	}
+}
+
+func matchingPrefix(a, b string) int {
+	id1, err := peer.IDB58Decode(a)
+	if err != nil {
+		fmt.Println("converting ID 1 failed: ", err)
+	}
+
+	id2, err := peer.IDB58Decode(b)
+	if err != nil {
+		fmt.Println("converting ID 2 failed: ", err)
+	}
+
+	xor := u.XOR(kb.ConvertPeerID(id1), kb.ConvertPeerID(id2))
+
+	xorInt := byteArrayToInt(xor, 4)
+
+	leadingZeros := bits.LeadingZeros32(uint32(xorInt))
+	return leadingZeros
 }
