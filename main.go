@@ -9,6 +9,8 @@ import (
 	"os"
 	"regexp"
 	"runtime"
+	"strconv"
+	"time"
 
 	u "gx/ipfs/QmNohiVssaPw3KVLZik59DBVGTSm2dGvYT9eoXt5DQ36Yz/go-ipfs-util"
 
@@ -21,15 +23,15 @@ var (
 	alphabet      = regexp.MustCompile("^[123456789abcdefghijklmnopqrstuvwxyz]+$")
 	numWorkers    = runtime.NumCPU()
 	byteN         = 2
-	difficulty    = 18
+	difficulty    = 5
 	examplePeerID = "QmaSCVHThE4syxb8hDnjMgCPvjsN9gedNBD2u2UeSs1hJk"
+	counter       = 0
 )
 
 // Key stores PrettyID containing desired substring at Index
 type Key struct {
-	GenPrettyID  string
-	DestPrettyID string
-	MatchPrefix  int
+	Elapsed     time.Duration
+	MatchPrefix int
 }
 
 func main() {
@@ -52,7 +54,7 @@ Usage:
 	destinationID := examplePeerID
 
 	if len(os.Args) > 1 {
-		destinationID = os.Args[1]
+		difficulty, _ = strconv.Atoi(os.Args[1])
 	}
 
 	runtime.GOMAXPROCS(numWorkers)
@@ -66,9 +68,7 @@ Usage:
 		}()
 	}
 	for key := range keyChan {
-		fmt.Println(key.DestPrettyID)
-		fmt.Println(key.GenPrettyID)
-		fmt.Println(key.MatchPrefix)
+		fmt.Printf("%d %d\n", key.MatchPrefix, key.Elapsed.Nanoseconds()/1e6)
 	}
 }
 
@@ -98,9 +98,11 @@ func byteArrayToInt(byteSlice []byte, bytes int) int {
 }
 
 func generateKey(destPrettyID string, keyChan chan Key) error {
+	start := time.Now()
+
 	for {
-		privateKey, publicKey, err := crypto.GenerateEd25519Key(rand.Reader)
-		//privateKey, publicKey, err := crypto.GenerateRSAKeyPair(2048, rand.Reader)
+		//privateKey, publicKey, err := crypto.GenerateEd25519Key(rand.Reader)
+		privateKey, publicKey, err := crypto.GenerateRSAKeyPair(2048, rand.Reader)
 		if err != nil {
 			return err
 		}
@@ -114,11 +116,20 @@ func generateKey(destPrettyID string, keyChan chan Key) error {
 
 		matchPrefix := matchingPrefix(genPretty, destPrettyID)
 
-		if matchPrefix < difficulty {
+		if matchPrefix != difficulty {
 			continue
 		}
 
-		genPrettyID := genID.Pretty()
+		elapsed := time.Since(start)
+
+		counter = counter + 1
+		if counter == 100 {
+			counter = 0
+			difficulty = difficulty + 1
+		}
+		//fmt.Printf("%d %s\n", matchPrefix, elapsed)
+
+		//genPrettyID := genID.Pretty()
 
 		privateKeyBytes, err := privateKey.Bytes()
 		if err != nil {
@@ -131,10 +142,10 @@ func generateKey(destPrettyID string, keyChan chan Key) error {
 		}
 
 		keyChan <- Key{
-			GenPrettyID:  genPrettyID,
-			DestPrettyID: destPrettyID,
-			MatchPrefix:  matchPrefix,
+			Elapsed:     elapsed,
+			MatchPrefix: matchPrefix,
 		}
+		start = time.Now()
 	}
 }
 
@@ -155,4 +166,9 @@ func matchingPrefix(a, b string) int {
 
 	leadingZeros := bits.LeadingZeros32(uint32(xorInt))
 	return leadingZeros
+}
+
+func timeTrack(start time.Time, name string) {
+	elapsed := time.Since(start)
+	log.Printf("%s took %s", name, elapsed)
 }
